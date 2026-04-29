@@ -1,0 +1,6 @@
+smartmoneyconcepts
+xgboost
+pandas
+numpy
+plotly
+requests
