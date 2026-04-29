@@ -6,8 +6,8 @@ import xgboost as xgb
 from smartmoneyconcepts import smc
 from datetime import datetime
 
-TELEGRAM_TOKEN = os.environ.get("BOT_TOKEN", "8717849870:AAHOuOQLXSK3TFiEJpF4n0HJCqoXWPIhet4")
-CHAT_ID = os.environ.get("CHATID", "901392944")
+TELEGRAM_TOKEN = os.environ.get("BOT_TOKEN", "")
+CHAT_ID = os.environ.get("CHATID", "")
 TOP_N = 30
 
 STABLECOINS = ['usdt', 'usdc', 'usd1', 'dai', 'busd', 'tusd', 'fdusd', 'usdd', 'usde', 'rusd']
@@ -26,16 +26,22 @@ def get_top_pairs(n=30):
     url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {"vs_currency": "usd", "order": "volume_desc", "per_page": 100, "page": 1, "sparkline": False}
     headers = {"accept": "application/json", "user-agent": "Mozilla/5.0"}
-    resp = requests.get(url, params=params, headers=headers, timeout=15)
-    data = resp.json()
-    pairs = {}
-    for coin in data:
-        if not is_valid_pair(coin):
-            continue
-        pairs[f"{coin['symbol'].upper()}/USDT"] = {"id": coin["id"], "volume": coin.get("total_volume", 0)}
-        if len(pairs) >= n:
-            break
-    return pairs
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        print(f"   CoinGecko status: {resp.status_code}")
+        data = resp.json()
+        pairs = {}
+        for coin in data:
+            if not is_valid_pair(coin):
+                continue
+            pairs[f"{coin['symbol'].upper()}/USDT"] = {"id": coin["id"], "volume": coin.get("total_volume", 0)}
+            if len(pairs) >= n:
+                break
+        print(f"   Найдено пар: {len(pairs)}")
+        return pairs
+    except Exception as e:
+        print(f"   Ошибка: {e}")
+        return {}
 
 def load_pair_data(coin_id, days=30):
     url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
@@ -137,56 +143,53 @@ def analyze_pair(pair_name, coin_id, volume):
     elif rr1 >= 1.0: score += 8
     if volume > 1e9: score += 5
     
-    # Ссылка на TradingView с линиями
     symbol = pair_name.replace("/USDT", "USDT")
-    tv_lines = f"BINANCE:{symbol}"
     
     return {
         'pair': pair_name, 'price': current_price, 'action': action,
         'ai_conf': ai_conf, 'entry': entry_price, 'stop': stop_price,
-        'tp1': tp1, 'tp2': tp2, 'rr1': rr1, 'score': score,
-        'symbol': symbol, 'entry': entry_price, 'stop': stop_price
+        'tp1': tp1, 'tp2': tp2, 'rr1': rr1, 'score': score, 'symbol': symbol
     }
 
 # Главный цикл
 print(f"🚀 {datetime.now().strftime('%d.%m.%Y %H:%M')}")
-pairs = get_top_pairs(20)
+pairs = get_top_pairs(TOP_N)
 
 results = []
 for pair_name, info in pairs.items():
+    print(f"   {pair_name}...", end=" ")
     result = analyze_pair(pair_name, info["id"], info["volume"])
     if result:
         results.append(result)
+        print(f"{result['action']} | {result['score']}/45 | R:R 1:{result['rr1']:.1f}")
+    else:
+        print("—")
 
 results.sort(key=lambda x: x['score'], reverse=True)
 top5 = results[:5]
 
 # Сводка
-message = f"📊 <b>ТОП-5 СИГНАЛОВ</b>\n\n"
+message = f"📊 <b>ТОП-5 СИГНАЛОВ</b> ({len(results)}/{len(pairs)})\n\n"
 
 for i, r in enumerate(top5):
     medal = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'][i]
     pf = lambda x: f"${x:,.2f}" if x >= 1 else f"${x:.6f}"
-    
-    # Красивое оформление сигнала
     message += f"{medal} <b>{r['pair']}</b> | {r['score']}/45 | R:R 1:{r['rr1']:.1f}\n"
     message += f"   {'🟢 LONG' if r['action'] == 'LONG' else '🔴 SHORT'} | AI: {r['ai_conf']:.0%}\n"
     message += f"   ┌─ Вход: <b>{pf(r['entry'])}</b>\n"
     message += f"   ├─ Стоп: {pf(r['stop'])}\n"
     message += f"   ├─ TP1:  {pf(r['tp1'])}\n"
     message += f"   └─ TP2:  {pf(r['tp2'])}\n"
-    message += f"   📈 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{r['symbol']}&interval=240'>График TradingView</a>\n\n"
+    message += f"   📈 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{r['symbol']}&interval=240'>TradingView</a>\n\n"
 
-# Сводка всех пар
 message += "<b>📋 ВСЕ ПАРЫ:</b>\n<pre>"
 for r in sorted(results, key=lambda x: x['pair']):
     message += f"{r['pair']:<10} {'LONG' if r['action']=='LONG' else 'SHORT':<6} {r['score']}/45  R:R 1:{r['rr1']:.1f}\n"
 for p in sorted([p for p in pairs.keys() if p not in [r['pair'] for r in results]]):
     message += f"{p:<10} —     —\n"
 message += f"</pre>\n🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-message += "<i>Авто-запуск каждые 4 часа через GitHub Actions</i>"
+message += "<i>GitHub Actions • каждые 4 часа</i>"
 
-# Отправка
 url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": False}
 resp = requests.post(url, json=payload)
