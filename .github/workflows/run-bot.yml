@@ -1,8 +1,8 @@
 name: Run Elliott Bot
 on:
   schedule:
-    - cron: '0 */4 * * *'  # каждые 4 часа
-  workflow_dispatch:  # ручной запуск
+    - cron: '0 */4 * * *'
+  workflow_dispatch:
 
 jobs:
   run-bot:
@@ -16,6 +16,6 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run bot
         env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python bot.py
