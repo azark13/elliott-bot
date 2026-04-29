@@ -1,3 +1,4 @@
+import os
 import requests
 import pandas as pd
 import numpy as np
@@ -5,10 +6,9 @@ import xgboost as xgb
 from smartmoneyconcepts import smc
 from datetime import datetime
 
-import os
 TELEGRAM_TOKEN = os.environ.get("BOT_TOKEN", "8717849870:AAHOuOQLXSK3TFiEJpF4n0HJCqoXWPIhet4")
-CHAT_ID = os.environ.get("CHAT_ID", "901392944")
-TOP_N = 20  # уменьшено для бесплатного тарифа
+CHAT_ID = os.environ.get("CHATID", "901392944")
+TOP_N = 30
 
 STABLECOINS = ['usdt', 'usdc', 'usd1', 'dai', 'busd', 'tusd', 'fdusd', 'usdd', 'usde', 'rusd']
 
@@ -22,7 +22,7 @@ def is_valid_pair(coin):
         return False
     return True
 
-def get_top_pairs(n=20):
+def get_top_pairs(n=30):
     url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {"vs_currency": "usd", "order": "volume_desc", "per_page": 100, "page": 1, "sparkline": False}
     headers = {"accept": "application/json", "user-agent": "Mozilla/5.0"}
@@ -137,14 +137,19 @@ def analyze_pair(pair_name, coin_id, volume):
     elif rr1 >= 1.0: score += 8
     if volume > 1e9: score += 5
     
+    # Ссылка на TradingView с линиями
+    symbol = pair_name.replace("/USDT", "USDT")
+    tv_lines = f"BINANCE:{symbol}"
+    
     return {
         'pair': pair_name, 'price': current_price, 'action': action,
         'ai_conf': ai_conf, 'entry': entry_price, 'stop': stop_price,
-        'tp1': tp1, 'rr1': rr1, 'score': score, 'tv_link': f"https://www.tradingview.com/chart/?symbol=BINANCE:{pair_name.replace('/USDT', 'USDT')}&interval=240"
+        'tp1': tp1, 'tp2': tp2, 'rr1': rr1, 'score': score,
+        'symbol': symbol, 'entry': entry_price, 'stop': stop_price
     }
 
 # Главный цикл
-print(f"🚀 Бот запущен: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+print(f"🚀 {datetime.now().strftime('%d.%m.%Y %H:%M')}")
 pairs = get_top_pairs(20)
 
 results = []
@@ -156,14 +161,21 @@ for pair_name, info in pairs.items():
 results.sort(key=lambda x: x['score'], reverse=True)
 top5 = results[:5]
 
-# Telegram
+# Сводка
 message = f"📊 <b>ТОП-5 СИГНАЛОВ</b>\n\n"
+
 for i, r in enumerate(top5):
     medal = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'][i]
     pf = lambda x: f"${x:,.2f}" if x >= 1 else f"${x:.6f}"
+    
+    # Красивое оформление сигнала
     message += f"{medal} <b>{r['pair']}</b> | {r['score']}/45 | R:R 1:{r['rr1']:.1f}\n"
-    message += f"   {'🟢 LONG' if r['action'] == 'LONG' else '🔴 SHORT'} | Вход: {pf(r['entry'])} | Стоп: {pf(r['stop'])}\n"
-    message += f"   TP1: {pf(r['tp1'])} | 📈 <a href='{r['tv_link']}'>TradingView</a>\n\n"
+    message += f"   {'🟢 LONG' if r['action'] == 'LONG' else '🔴 SHORT'} | AI: {r['ai_conf']:.0%}\n"
+    message += f"   ┌─ Вход: <b>{pf(r['entry'])}</b>\n"
+    message += f"   ├─ Стоп: {pf(r['stop'])}\n"
+    message += f"   ├─ TP1:  {pf(r['tp1'])}\n"
+    message += f"   └─ TP2:  {pf(r['tp2'])}\n"
+    message += f"   📈 <a href='https://www.tradingview.com/chart/?symbol=BINANCE:{r['symbol']}&interval=240'>График TradingView</a>\n\n"
 
 # Сводка всех пар
 message += "<b>📋 ВСЕ ПАРЫ:</b>\n<pre>"
@@ -171,9 +183,15 @@ for r in sorted(results, key=lambda x: x['pair']):
     message += f"{r['pair']:<10} {'LONG' if r['action']=='LONG' else 'SHORT':<6} {r['score']}/45  R:R 1:{r['rr1']:.1f}\n"
 for p in sorted([p for p in pairs.keys() if p not in [r['pair'] for r in results]]):
     message += f"{p:<10} —     —\n"
-message += f"</pre>\n🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+message += f"</pre>\n🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+message += "<i>Авто-запуск каждые 4 часа через GitHub Actions</i>"
 
-requests.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-              json={"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": False})
+# Отправка
+url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": False}
+resp = requests.post(url, json=payload)
 
-print("✅ Отправлено!")
+if resp.status_code == 200:
+    print("✅ Отправлено!")
+else:
+    print(f"❌ Ошибка: {resp.text}")
