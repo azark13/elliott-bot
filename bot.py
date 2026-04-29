@@ -5,8 +5,9 @@ import xgboost as xgb
 from smartmoneyconcepts import smc
 from datetime import datetime
 
-TELEGRAM_TOKEN = "8717849870:AAHOuOQLXSK3TFiEJpF4n0HJCqoXWPIhet4"
-CHAT_ID = "901392944"
+import os
+TELEGRAM_TOKEN = os.environ.get("BOT_TOKEN", "8717849870:AAHOuOQLXSK3TFiEJpF4n0HJCqoXWPIhet4")
+CHAT_ID = os.environ.get("CHAT_ID", "901392944")
 TOP_N = 20  # уменьшено для бесплатного тарифа
 
 STABLECOINS = ['usdt', 'usdc', 'usd1', 'dai', 'busd', 'tusd', 'fdusd', 'usdd', 'usde', 'rusd']
