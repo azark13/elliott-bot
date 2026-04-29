@@ -3,66 +3,66 @@ import requests
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from smartmoneyconcepts import smc
 from datetime import datetime
 
 TELEGRAM_TOKEN = os.environ.get("BOT_TOKEN", "")
 CHAT_ID = os.environ.get("CHATID", "")
 TOP_N = 30
 
-STABLECOINS = ['usdt', 'usdc', 'usd1', 'dai', 'busd', 'tusd', 'fdusd', 'usdd', 'usde', 'rusd']
+# Топ-30 пар по объёму на Binance (статический список, обновлён 2026)
+TOP_SYMBOLS = [
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT",
+    "DOGEUSDT", "ADAUSDT", "LTCUSDT", "LINKUSDT", "AVAXUSDT",
+    "DOTUSDT", "BCHUSDT", "MATICUSDT", "UNIUSDT", "ATOMUSDT",
+    "XLMUSDT", "ETCUSDT", "FILUSDT", "ALGOUSDT", "VETUSDT",
+    "ICPUSDT", "SANDUSDT", "AXSUSDT", "THETAUSDT", "FTMUSDT",
+    "EGLDUSDT", "MANAUSDT", "GRTUSDT", "ZECUSDT", "AAVEUSDT"
+]
 
-def is_valid_pair(coin):
-    name = coin.get("id", "").lower()
-    symbol = coin.get("symbol", "").lower()
-    volume = coin.get("total_volume", 0)
-    if symbol in STABLECOINS or name in STABLECOINS or symbol.startswith('w'):
-        return False
-    if volume < 50_000_000:
-        return False
-    return True
-
-def get_top_pairs(n=30):
-    url = "https://api.coingecko.com/api/v3/coins/markets"
-    params = {"vs_currency": "usd", "order": "volume_desc", "per_page": 100, "page": 1, "sparkline": False}
-    headers = {"accept": "application/json", "user-agent": "Mozilla/5.0"}
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=15)
-        print(f"   CoinGecko status: {resp.status_code}")
-        data = resp.json()
-        pairs = {}
-        for coin in data:
-            if not is_valid_pair(coin):
-                continue
-            pairs[f"{coin['symbol'].upper()}/USDT"] = {"id": coin["id"], "volume": coin.get("total_volume", 0)}
-            if len(pairs) >= n:
+def load_pair_data(symbol, days=30):
+    """Загружает 4H свечи через Binance API."""
+    url = "https://api.binance.com/api/v3/klines"
+    
+    all_data = []
+    end_time = int(datetime.now().timestamp() * 1000)
+    start_time = int((datetime.now().timestamp() - days * 86400) * 1000)
+    
+    while start_time < end_time:
+        params = {
+            "symbol": symbol,
+            "interval": "4h",
+            "startTime": start_time,
+            "endTime": end_time,
+            "limit": 500
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if not data:
+                    break
+                all_data = data + all_data
+                end_time = data[0][0] - 1
+            else:
                 break
-        print(f"   Найдено пар: {len(pairs)}")
-        return pairs
-    except Exception as e:
-        print(f"   Ошибка: {e}")
-        return {}
-
-def load_pair_data(coin_id, days=30):
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/ohlc"
-    params = {"vs_currency": "usd", "days": days}
-    headers = {"accept": "application/json", "user-agent": "Mozilla/5.0"}
-    try:
-        resp = requests.get(url, params=params, headers=headers, timeout=10)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        if not data or len(data) < 20:
-            return None
-        df = pd.DataFrame(data, columns=["timestamp", "open", "high", "low", "close"])
-        df["volume"] = 0
-        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
-        df.set_index("timestamp", inplace=True)
-        df.columns = ["Open", "High", "Low", "Close", "Volume"]
-        return df
-    except:
+        except:
+            break
+    
+    if len(all_data) < 20:
         return None
+    
+    df = pd.DataFrame(all_data, columns=[
+        "timestamp", "open", "high", "low", "close", "volume",
+        "close_time", "quote_volume", "trades", "taker_buy_base",
+        "taker_buy_quote", "ignore"
+    ])
+    df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+    df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+    df.set_index("timestamp", inplace=True)
+    for col in ["open", "high", "low", "close", "volume"]:
+        df[col] = df[col].astype(float)
+    df.columns = ["Open", "High", "Low", "Close", "Volume"]
+    return df
 
 def ai_predict(df):
     if len(df) < 30:
@@ -92,8 +92,8 @@ def ai_predict(df):
     except:
         return None, None
 
-def analyze_pair(pair_name, coin_id, volume):
-    df = load_pair_data(coin_id, days=30)
+def analyze_pair(symbol):
+    df = load_pair_data(symbol, days=30)
     if df is None:
         return None
     
@@ -141,24 +141,24 @@ def analyze_pair(pair_name, coin_id, volume):
     else: score += 5
     if rr1 >= 1.5: score += 15
     elif rr1 >= 1.0: score += 8
-    if volume > 1e9: score += 5
     
-    symbol = pair_name.replace("/USDT", "USDT")
+    pair_name = symbol.replace("USDT", "/USDT")
     
     return {
         'pair': pair_name, 'price': current_price, 'action': action,
         'ai_conf': ai_conf, 'entry': entry_price, 'stop': stop_price,
-        'tp1': tp1, 'tp2': tp2, 'rr1': rr1, 'score': score, 'symbol': symbol
+        'tp1': tp1, 'tp2': tp2, 'rr1': rr1, 'score': score,
+        'symbol': symbol
     }
 
 # Главный цикл
 print(f"🚀 {datetime.now().strftime('%d.%m.%Y %H:%M')}")
-pairs = get_top_pairs(TOP_N)
+print(f"📡 Binance API • {TOP_N} пар")
 
 results = []
-for pair_name, info in pairs.items():
-    print(f"   {pair_name}...", end=" ")
-    result = analyze_pair(pair_name, info["id"], info["volume"])
+for symbol in TOP_SYMBOLS[:TOP_N]:
+    print(f"   {symbol}...", end=" ")
+    result = analyze_pair(symbol)
     if result:
         results.append(result)
         print(f"{result['action']} | {result['score']}/45 | R:R 1:{result['rr1']:.1f}")
@@ -169,7 +169,7 @@ results.sort(key=lambda x: x['score'], reverse=True)
 top5 = results[:5]
 
 # Сводка
-message = f"📊 <b>ТОП-5 СИГНАЛОВ</b> ({len(results)}/{len(pairs)})\n\n"
+message = f"📊 <b>ТОП-5 СИГНАЛОВ</b> ({len(results)}/{len(TOP_SYMBOLS[:TOP_N])})\n\n"
 
 for i, r in enumerate(top5):
     medal = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣'][i]
@@ -185,10 +185,12 @@ for i, r in enumerate(top5):
 message += "<b>📋 ВСЕ ПАРЫ:</b>\n<pre>"
 for r in sorted(results, key=lambda x: x['pair']):
     message += f"{r['pair']:<10} {'LONG' if r['action']=='LONG' else 'SHORT':<6} {r['score']}/45  R:R 1:{r['rr1']:.1f}\n"
-for p in sorted([p for p in pairs.keys() if p not in [r['pair'] for r in results]]):
-    message += f"{p:<10} —     —\n"
+for s in TOP_SYMBOLS[:TOP_N]:
+    pn = s.replace("USDT", "/USDT")
+    if pn not in [r['pair'] for r in results]:
+        message += f"{pn:<10} —     —\n"
 message += f"</pre>\n🕐 {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
-message += "<i>GitHub Actions • каждые 4 часа</i>"
+message += "<i>Binance API • GitHub Actions • каждые 4 часа</i>"
 
 url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML", "disable_web_page_preview": False}
